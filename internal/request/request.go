@@ -39,7 +39,6 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		Headers: headers.NewHeaders(),
 		state:   requestStateInitialized,
 	}
-	count := 0
 
 	for req.state != requestStateDone {
 		if readToIndex >= len(buf) {
@@ -51,7 +50,9 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		numBytesRead, err := reader.Read(buf[readToIndex:])
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				req.state = requestStateDone
+				if req.state != requestStateDone {
+					return nil, fmt.Errorf("incomplete request, in state: %d, read %d bytes on EOF", req.state, numBytesRead)
+				}
 				break
 			}
 			return nil, err
@@ -62,21 +63,8 @@ func RequestFromReader(reader io.Reader) (*Request, error) {
 		if err != nil {
 			return nil, err
 		}
-		count++
 		copy(buf, buf[numBytesParsed:])
 		readToIndex -= numBytesParsed
-	}
-
-	contentLength := req.Headers.Get("content-length")
-	if contentLength != "" {
-		cl, err := strconv.Atoi(contentLength)
-		if err != nil {
-			return nil, err
-		}
-		if len(req.Body) < cl {
-			return nil, fmt.Errorf("Body too short")
-		}
-
 	}
 
 	return req, nil
@@ -91,15 +79,11 @@ func (r *Request) parse(data []byte) (int, error) {
 			return 0, err
 		}
 
-		if bytesParsed == 0 {
-			return 0, nil
-		}
-
 		totalBytesParsed += bytesParsed
-		if totalBytesParsed >= len(data[totalBytesParsed:]) {
-			return totalBytesParsed, nil
-		}
 
+		if bytesParsed == 0 {
+			break
+		}
 	}
 
 	return totalBytesParsed, nil
@@ -120,7 +104,6 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 		r.RequestLine = *requestLine
 		return numBytesParsed, nil
 	case requestStateParsingHeaders:
-
 		numBytesParsed, done, err := r.Headers.Parse(data)
 		if err != nil || done == true {
 			r.state = requestStateParsingBody
@@ -129,27 +112,25 @@ func (r *Request) parseSingle(data []byte) (int, error) {
 
 		return numBytesParsed, nil
 	case requestStateParsingBody:
-		contentLengthHeader := r.Headers.Get("content-length")
-		var contentLength int = 0
-		if contentLengthHeader != "" {
-			parsedInt, err := strconv.Atoi(contentLengthHeader)
-			if err != nil {
-				return 0, fmt.Errorf("Malformed value for header 'Content-Length' %s", err)
-			}
-			contentLength = parsedInt
-
-		}
-
-		if contentLength == 0 || len(r.Body) == contentLength {
+		contentLenStr, ok := r.Headers.Get("content-length")
+		if !ok {
 			r.state = requestStateDone
-			return 0, nil
+			return len(data), nil
 		}
 
-		if len(r.Body) > contentLength {
+		contentLen, err := strconv.Atoi(contentLenStr)
+		if err != nil {
+			return 0, fmt.Errorf("Malformed Content-Length %s", err)
+		}
+		r.Body = append(r.Body, data...)
+
+		if len(r.Body) > contentLen {
 			return 0, fmt.Errorf("Body exceeds content-length")
 		}
 
-		r.Body = append(r.Body, data...)
+		if len(r.Body) == contentLen {
+			r.state = requestStateDone
+		}
 
 		return len(data), nil
 

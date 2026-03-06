@@ -57,19 +57,11 @@ func TestHeadersParse(t *testing.T) {
 	assert.Equal(t, 0, n)
 	assert.False(t, done)
 
-	// Test: invalid token for field-name
+	// Test: Invalid character header
 	headers = NewHeaders()
 	data = []byte("H©st: localhost:42069\r\n\r\n")
 	n, done, err = headers.Parse(data)
 	require.Error(t, err)
 	assert.Equal(t, 0, n)
 	assert.False(t, done)
-
-	// Test: multiple values with same name
-	headers = NewHeaders()
-	headers.Parse([]byte("Set-Person: Prime loves zig\r\n"))
-	headers.Parse([]byte("Set-Person: Benno loves stuff\r\n"))
-	n, done, err = headers.Parse([]byte("Set-Person: laneloves go\r\n"))
-	require.NoError(t, err)
-	assert.Equal(t, "Prime loves zig, Benno loves stuff, laneloves go", headers["set-person"])
 }

@@ -41,7 +41,7 @@ func requestLineFromString(text string) (*RequestLine, error) {
 	requestTarget := parts[1]
 
 	versionParts := strings.Split(parts[2], "/")
-	if len(versionParts) != 2 {
+	if versionParts[0] != "HTTP" || len(versionParts) != 2 {
 		return nil, fmt.Errorf("Malformed version %s", text)
 	}
 
