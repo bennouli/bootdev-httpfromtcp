@@ -1,11 +1,13 @@
 package main
 
 import (
+	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
-	"io"
+	"httpfromtcp/internal/response"
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 )
 
@@ -25,22 +27,53 @@ func main() {
 	log.Println("Server gracefully stopped")
 }
 
-func handler(w io.Writer, request request.Request) *HandlerError {
+func handler(w *response.Writer, request request.Request) {
+	var body []byte
 
-	if request.RequestLine.RequestTarget == "/yourproblem" {
-		return &HandlerError{
-			StatusCode: 400,
-			Message:    "Your problem is not my problem\n",
-		}
+	switch request.RequestLine.RequestTarget {
+	case "/":
+		body = []byte(`<html>
+  <head>
+    <title>200 OK</title>
+  </head>
+  <body>
+    <h1>Success!</h1>
+    <p>Your request was an absolute banger.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(200)
+
+	case "/yourproblem":
+		body = []byte(`<html>
+  <head>
+    <title>400 Bad Request</title>
+  </head>
+  <body>
+    <h1>Bad Request</h1>
+    <p>Your request honestly kinda sucked.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(400)
+
+		w.WriteBody([]byte(body))
+	case "/myproblem":
+		body = []byte(`<html>
+  <head>
+    <title>500 Internal Server Error</title>
+  </head>
+  <body>
+    <h1>Internal Server Error</h1>
+    <p>Okay, you know what? This one is on me.</p>
+  </body>
+</html>`)
+		w.WriteStatusLine(500)
 	}
-	if request.RequestLine.RequestTarget == "/myproblem" {
-		return &HandlerError{
-			StatusCode: 500,
-			Message:    "Woopsie, my bad\n",
-		}
-	}
 
-	w.Write([]byte("All good, frfr\n"))
+	h := headers.NewHeaders()
+	h.Set("Connection", "close")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	h.Set("Content-Type", "text/html")
+	w.WriteHeaders(h)
 
-	return nil
+	w.WriteBody([]byte(body))
 }
