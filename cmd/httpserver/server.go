@@ -1,9 +1,11 @@
 package main
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"httpfromtcp/internal/request"
+	"httpfromtcp/internal/response"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -13,62 +15,82 @@ import (
 type Server struct {
 	status   atomic.Bool
 	listener net.Listener
+	handler  Handler
 }
 
-func Serve(port int) (*Server, error) {
-
+func Serve(port int, handler Handler) (*Server, error) {
 	listener, err := net.Listen("tcp", "localhost:"+strconv.Itoa(port))
 	if err != nil {
 		return nil, err
 	}
 
-	server := Server{listener: listener, status: atomic.Bool{}}
-	server.status.Store(true)
+	server := &Server{
+		listener: listener,
+		handler:  handler,
+	}
+	go server.listen()
 
-	go server.Listen()
-
-	return &server, nil
+	return server, nil
 }
 
 func (s *Server) Close() {
 	s.listener.Close()
 }
 
-func (s *Server) Listen() {
+func (s *Server) listen() {
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if s.status.Load() == false {
+			if s.status.Load() {
 				return
 			}
-			log.Fatalf("Could not accept connection %v", err)
+			log.Printf("Error accepting connection %v", err)
+			continue
 		}
-
 		go s.handle(conn)
 	}
 }
 
 func (s *Server) handle(conn net.Conn) {
-	_, err := request.RequestFromReader(conn)
+	defer conn.Close()
+
+	req, err := request.RequestFromReader(conn)
 	if err != nil {
-		fmt.Println("not parsed?")
 		if s.status.Load() == false {
 			fmt.Println("not running ... ??")
 			return
 		}
-		log.Fatalf("Could not read request %v", err)
+		return
 	}
 
-	w := bufio.NewWriter(conn)
-	fmt.Fprintln(w, "HTTP/1.1 200 OK")
-	fmt.Fprintln(w, "Content-Type: text/plain")
-	fmt.Fprintln(w, "Connection: closed")
-	fmt.Fprintln(w, "Content-Length: 13")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Hello World!")
-	err = w.Flush()
-	if err != nil && s.status.Load() == true {
-		log.Fatalf("Could not read request %v", err)
+	handlerBuffer := bytes.NewBuffer([]byte{})
+
+	handlerError := s.handler(handlerBuffer, *req)
+	if handlerError != nil {
+		handlerError.WriteTo(conn)
+		return
 	}
 
+	response.WriteStatusLine(conn, 200)
+	headers := response.GetDefaultHeaders(handlerBuffer.Len())
+	response.WriteHeaders(conn, headers)
+	conn.Write(handlerBuffer.Bytes())
 }
+
+type HandlerError struct {
+	StatusCode response.StatusCode
+	Message    string
+}
+
+func (err HandlerError) WriteTo(w io.Writer) {
+	messageBytes := []byte(err.Message)
+
+	response.WriteStatusLine(w, err.StatusCode)
+
+	headers := response.GetDefaultHeaders(len(messageBytes))
+	response.WriteHeaders(w, headers)
+
+	w.Write(messageBytes)
+}
+
+type Handler func(w io.Writer, request request.Request) *HandlerError
