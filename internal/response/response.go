@@ -20,6 +20,7 @@ const (
 	WriterStatusStatusLine WriterStatus = iota
 	WriterStatusHeaders
 	WriterStatusBody
+	WriterStatusTrailers
 	WriterStatusDone
 )
 
@@ -29,8 +30,7 @@ type Writer struct {
 }
 
 func (w *Writer) Write(p []byte) (int, error) {
-	w.writer.Write(p)
-	return len(p), nil
+	return w.writer.Write(p)
 }
 
 func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
@@ -53,16 +53,19 @@ func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
 	w.status = WriterStatusHeaders
 	return nil
 }
-func (w *Writer) WriteHeaders(headers headers.Headers) error {
+func (w *Writer) WriteHeaders(h headers.Headers) error {
 	if w.status != WriterStatusHeaders {
 		return fmt.Errorf("Unexpected status '%v' of writer when trying to write headers", w.status)
 	}
-	for k, v := range headers {
+	for k, v := range h {
 		fmt.Fprintf(w, "%s: %s\r\n", k, v)
 	}
 
 	// add CRLF between headers and body
-	w.Write([]byte("\r\n"))
+	_, err := w.Write([]byte("\r\n"))
+	if err != nil {
+		return err
+	}
 
 	w.status = WriterStatusBody
 	return nil
@@ -72,10 +75,11 @@ func (w *Writer) WriteBody(p []byte) (int, error) {
 	if w.status != WriterStatusBody {
 		return 0, fmt.Errorf("Unexpected status '%v' of writer when trying to write body", w.status)
 	}
-	w.writer.Write(p)
+	n, err := w.Write(p)
 
-	w.status = WriterStatusDone
-	return len(p), nil
+	w.status = WriterStatusTrailers
+
+	return n, err
 }
 
 func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
@@ -90,10 +94,33 @@ func (w *Writer) WriteChunkedBody(p []byte) (int, error) {
 }
 
 func (w *Writer) WriteChunkedBodyDone() (int, error) {
-	n, err := w.Write([]byte("0\r\n\r\n"))
+	if w.status != WriterStatusBody {
+		return 0, fmt.Errorf("Unexpected status '%v' of writer when trying to write body", w.status)
+	}
+
+	n, err := w.Write([]byte("0\r\n"))
+
+	w.status = WriterStatusTrailers
+	return n, err
+}
+
+func (w *Writer) WriteTrailers(h headers.Headers) error {
+	if w.status != WriterStatusTrailers {
+		return fmt.Errorf("Unexpected status '%v' of writer when trying to write trailers", w.status)
+	}
+	fmt.Println("writing trailers")
+
+	for k, v := range h {
+		fmt.Printf("%s: %s\r\n", k, v)
+		fmt.Fprintf(w, "%s: %s\r\n", k, v)
+	}
+
+	fmt.Println("closing CRLF")
+	// add closing CRLF
+	_, err := w.Write([]byte("\r\n"))
 
 	w.status = WriterStatusDone
-	return n, err
+	return err
 }
 
 func NewWriter(w io.Writer) *Writer {

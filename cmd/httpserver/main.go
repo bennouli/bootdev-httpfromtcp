@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"httpfromtcp/internal/headers"
 	"httpfromtcp/internal/request"
@@ -36,41 +37,95 @@ func handler(w *response.Writer, request request.Request) {
 
 	if strings.HasPrefix(request.RequestLine.RequestTarget, "/httpbin") {
 		parts := strings.Split(request.RequestLine.RequestTarget, "/")
-		num := parts[len(parts)-1]
+		leaf := parts[len(parts)-1]
 
-		w.WriteStatusLine(200)
-		h := headers.NewHeaders()
-		h.Set("Content-Type", "application/json")
-		h.Set("Transfer-Encoding", "chunked")
-		h.Set("Host", "httpbin.org")
+		// DETERMINE ROUTE
+		url := "https://httpbin.org"
+		if leaf == "html" {
+			url += "/html"
+		} else {
+			_, err := strconv.Atoi(leaf)
+			if err != nil {
+				handleError(w, 400) // TODO: 404
+				return
+			}
+			url += "/stream/" + leaf
+		}
 
-		w.WriteHeaders(h)
-
-		resp, err := http.Get("https://httpbin.org/stream/" + num)
-
+		resp, err := http.Get(url)
 		if err != nil {
 			fmt.Println(err)
 			handleError(w, 500)
 			return
 		}
+		err = w.WriteStatusLine(200)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 
+		h := headers.NewHeaders()
+		trailers := headers.NewHeaders()
+
+		// STATUS LINE + HEADERS
+		switch leaf {
+		case "html":
+			h.Set("Host", "httpbin.org")
+			h.Set("Content-Type", "text/html")
+			h.Set("Transfer-Encoding", "chunked")
+			h.Set("Trailer", http.CanonicalHeaderKey("X-Content-SHA256")+", "+http.CanonicalHeaderKey("X-Content-Length"))
+			err = w.WriteHeaders(h)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+
+		default:
+			h.Set("Host", "httpbin.org")
+			h.Set("Content-Type", "application/json")
+			h.Set("Transfer-Encoding", "chunked")
+
+			err = w.WriteHeaders(h)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
+
+		// BODY
+		totalBytesRead := 0
 		b := make([]byte, 1024)
 		done := false
 		for !done {
 			n, err := resp.Body.Read(b)
-			fmt.Println(n, err)
-			if err != nil {
-				if err == io.EOF {
-					w.WriteChunkedBodyDone()
-					done = true
-					break
-				}
-				handleError(w, 500)
+			totalBytesRead += n
+			fmt.Println(n)
+			if err != nil && err != io.EOF {
+				fmt.Println("unexpected", err)
+				w.WriteChunkedBodyDone()
 				done = true
+				break
 			}
 
+			body = append(body, b[:n]...)
 			w.WriteChunkedBody(b[:n])
 
+			if err == io.EOF {
+				w.WriteChunkedBodyDone()
+				done = true
+			}
+		}
+
+		// TRAILERS
+		if leaf == "html" {
+			trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(body)))
+			trailers.Set("X-Content-Length", strconv.Itoa(totalBytesRead))
+			fmt.Println(trailers)
+		}
+
+		err = w.WriteTrailers(trailers)
+		if err != nil {
+			fmt.Println("Error while writing trailers", err)
 		}
 
 		return

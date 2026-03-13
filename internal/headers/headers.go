@@ -3,6 +3,7 @@ package headers
 import (
 	"bytes"
 	"fmt"
+	"net/http"
 	"strings"
 )
 
@@ -78,7 +79,7 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error) {
 }
 
 func (h Headers) Set(key, value string) {
-	key = strings.ToLower(key)
+	key = http.CanonicalHeaderKey(key)
 	v, ok := h[key]
 	if ok {
 		value = strings.Join([]string{
@@ -90,7 +91,7 @@ func (h Headers) Set(key, value string) {
 }
 
 func (h Headers) Get(key string) (string, bool) {
-	v, ok := h[strings.ToLower(key)]
+	v, ok := h[http.CanonicalHeaderKey(key)]
 	return v, ok
 }
 
