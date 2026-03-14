@@ -30,7 +30,9 @@ type Writer struct {
 }
 
 func (w *Writer) Write(p []byte) (int, error) {
-	return w.writer.Write(p)
+	n, err := w.writer.Write(p)
+	// fmt.Printf("Write: n=%d, err=%v, data=%q\n", n, err, p)
+	return n, err
 }
 
 func (w *Writer) WriteStatusLine(statusCode StatusCode) error {
@@ -104,19 +106,18 @@ func (w *Writer) WriteChunkedBodyDone() (int, error) {
 	return n, err
 }
 
-func (w *Writer) WriteTrailers(h headers.Headers) error {
+func (w *Writer) WriteTrailers(trailers headers.Headers) error {
 	if w.status != WriterStatusTrailers {
 		return fmt.Errorf("Unexpected status '%v' of writer when trying to write trailers", w.status)
 	}
-	fmt.Println("writing trailers")
 
-	for k, v := range h {
-		fmt.Printf("%s: %s\r\n", k, v)
-		fmt.Fprintf(w, "%s: %s\r\n", k, v)
+	for k, v := range trailers {
+		_, err := fmt.Fprintf(w, "%s: %s\r\n", k, v)
+		if err != nil {
+			return err
+		}
 	}
 
-	fmt.Println("closing CRLF")
-	// add closing CRLF
 	_, err := w.Write([]byte("\r\n"))
 
 	w.status = WriterStatusDone

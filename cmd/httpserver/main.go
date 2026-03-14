@@ -54,61 +54,63 @@ func handler(w *response.Writer, request request.Request) {
 
 		resp, err := http.Get(url)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("404 httpbin", err)
 			handleError(w, 500)
 			return
 		}
 		err = w.WriteStatusLine(200)
 		if err != nil {
-			fmt.Println(err)
+			fmt.Println("Error writing status line:", err)
 			return
 		}
 
 		h := headers.NewHeaders()
 		trailers := headers.NewHeaders()
 
-		// STATUS LINE + HEADERS
+		// fill headers based on target
 		switch leaf {
 		case "html":
-			h.Set("Host", "httpbin.org")
 			h.Set("Content-Type", "text/html")
 			h.Set("Transfer-Encoding", "chunked")
 			h.Set("Trailer", http.CanonicalHeaderKey("X-Content-SHA256")+", "+http.CanonicalHeaderKey("X-Content-Length"))
-			err = w.WriteHeaders(h)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
 
 		default:
-			h.Set("Host", "httpbin.org")
 			h.Set("Content-Type", "application/json")
 			h.Set("Transfer-Encoding", "chunked")
 
-			err = w.WriteHeaders(h)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
+		}
+
+		// Write Headers
+		err = w.WriteHeaders(h)
+		if err != nil {
+			fmt.Println("Error writing headers", err)
+			return
 		}
 
 		// BODY
 		totalBytesRead := 0
-		b := make([]byte, 1024)
+		body = make([]byte, 1024)
 		done := false
 		for !done {
-			n, err := resp.Body.Read(b)
-			totalBytesRead += n
-			fmt.Println(n)
+			// grow body
+			if totalBytesRead >= len(body) {
+				newBody := make([]byte, len(body)*2)
+				copy(newBody, body)
+				body = newBody
+			}
+
+			n, err := resp.Body.Read(body[totalBytesRead:])
 			if err != nil && err != io.EOF {
-				fmt.Println("unexpected", err)
 				w.WriteChunkedBodyDone()
 				done = true
 				break
 			}
 
-			body = append(body, b[:n]...)
-			w.WriteChunkedBody(b[:n])
+			if n > 0 {
+				w.WriteChunkedBody(body[totalBytesRead : totalBytesRead+n])
+			}
+
+			totalBytesRead += n
 
 			if err == io.EOF {
 				w.WriteChunkedBodyDone()
@@ -118,9 +120,8 @@ func handler(w *response.Writer, request request.Request) {
 
 		// TRAILERS
 		if leaf == "html" {
-			trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(body)))
+			trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(body[:totalBytesRead])))
 			trailers.Set("X-Content-Length", strconv.Itoa(totalBytesRead))
-			fmt.Println(trailers)
 		}
 
 		err = w.WriteTrailers(trailers)
