@@ -89,28 +89,21 @@ func handler(w *response.Writer, request request.Request) {
 
 		// BODY
 		totalBytesRead := 0
-		body = make([]byte, 1024)
+		b := make([]byte, 1024)
 		done := false
 		for !done {
-			// grow body
-			if totalBytesRead >= len(body) {
-				newBody := make([]byte, len(body)*2)
-				copy(newBody, body)
-				body = newBody
-			}
-
-			n, err := resp.Body.Read(body[totalBytesRead:])
+			n, err := resp.Body.Read(b)
+			totalBytesRead += n
 			if err != nil && err != io.EOF {
 				w.WriteChunkedBodyDone()
 				done = true
 				break
 			}
 
+			body = append(body, b[:n]...)
 			if n > 0 {
-				w.WriteChunkedBody(body[totalBytesRead : totalBytesRead+n])
+				w.WriteChunkedBody(b[:n])
 			}
-
-			totalBytesRead += n
 
 			if err == io.EOF {
 				w.WriteChunkedBodyDone()
@@ -120,7 +113,7 @@ func handler(w *response.Writer, request request.Request) {
 
 		// TRAILERS
 		if leaf == "html" {
-			trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(body[:totalBytesRead])))
+			trailers.Set("X-Content-SHA256", fmt.Sprintf("%x", sha256.Sum256(body)))
 			trailers.Set("X-Content-Length", strconv.Itoa(totalBytesRead))
 		}
 
